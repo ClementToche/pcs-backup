@@ -1,0 +1,118 @@
+#!/bin/bash
+
+NAME=pcs-backup
+VERSION=1.0.0
+SUPPORTED_VOLUMES="slapd-conf slapd-db"
+
+source env_file
+
+function init-pcs(){
+    if [ ! -f "env_file" ]
+    then
+        echo "env_file don't exist. Please create one by taking env_file.example as source to fill-in value"
+        exit -1
+    fi
+
+    if [ ! -d "${PCS_BACKUP_PATH}" ]
+    then
+        echo "Backup folder '${PCS_BACKUP_PATH}' don't exist"
+        while [ -z "${answ}" ]
+        do
+            read -r -p "Create it ? [y/n]" answ
+        done
+        if [ "${answ}" == "y" ] || [ "${answ}" == "Y" ]
+        then
+            mkdir -p "${PCS_BACKUP_PATH}"
+        else
+            echo "Can't continue. Abort !"
+            exit -1
+        fi
+    fi
+
+    volumes=$(docker volume ls)
+    mounts="--mount type=bind,src=${PCS_BACKUP_PATH},dst=/mnt/sauv/"
+
+    for vol in ${SUPPORTED_VOLUMES}
+    do
+        echo $vol
+        if [ ! -z "$(echo ${volumes} | grep ${vol})" ]
+        then
+            mounts+=" --mount type=volume,src=${vol},dst=/mnt/backup/${vol}/,readonly"
+        fi
+    done
+
+    echo $mounts
+}
+
+function build() {
+	docker build -t ${NAME}:${VERSION} --rm .
+}
+
+function build-nocache(){
+	docker build -t ${NAME}:${VERSION} --no-cache --rm .
+}
+
+function run(){
+    docker run --rm -it -detach \
+	    --env-file env_file \
+        ${mounts} \
+	    ${NAME}:${VERSION}
+}
+
+function run_it(){
+    docker run --rm -it -detach \
+	    --env-file env_file \
+        ${mounts} \
+        --entrypoint "/bin/bash" \
+	    ${NAME}:${VERSION}
+}
+
+function stop(){
+    docker stop $(docker container ls | grep "${NAME}" | tr -s " " | cut -d ' ' -f1)
+}
+
+function attach()
+{
+    docker attach $(docker container ls | grep "${NAME}" | tr -s " " | cut -d ' ' -f1)
+}
+
+function release()
+{
+    git-tag-version: release
+	git tag -a v${VERSION} -m "v${VERSION}"
+	git push origin v${VERSION}
+}
+
+init-pcs
+
+case $1 in
+    "build")
+        if [ "$2" == "force" ]
+        then
+            build-nocache
+        else
+            build
+        fi
+        ;;
+    "password")
+        password
+        ;;
+    "run")
+        if [ "$2" == "it" ]
+        then
+            run_it
+            attach
+        else
+            run
+        fi
+        ;;
+    "stop")
+        stop
+        ;;
+    "attach")
+        attach
+        ;;
+    *)
+        echo Command $1 not found !
+        ;;
+esac
